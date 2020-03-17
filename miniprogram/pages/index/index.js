@@ -1,5 +1,6 @@
 // miniprogram/pages/index/index.js
 var db = require('../../unit/db.js')
+const app = getApp()
 
 Page({
 
@@ -7,10 +8,16 @@ Page({
    * 页面的初始数据
    */
   data: {
-    is_hide: 'none',
+    lock: false,
+    avatarUrl: '../../icon/user-unlogin.png',
+    nickName: '点击登录',
+    logged: false,
+    is_seach: false,
+    is_sidebar: false,
     select_id: 'hushen',
     sort_by: 'comprehensive',
     sort_icon: ['up-down', 'up-down', 'up-down'],
+    page: 1,
     /**
      * code:代码
      * name:名称
@@ -63,12 +70,39 @@ Page({
     }
   },
 
+  //去详细页
+  toDetail: function(e) {
+    if (this.data.lock) {
+      //开锁
+      setTimeout(() => {
+        this.setData({
+          lock: false
+        });
+      }, 50);
+    } else {
+      wx.navigateTo({
+        url: '/pages/details/details?code=' + e.currentTarget.id,
+      })
+    }
+  },
+
+  //显示添加自选按钮
+  showAddOption: function() {
+    this.setData({
+      lock: true
+    });
+    console.log('aaa')
+  },
+
   // 排序
   sort: function(e) {
     console.log(e.currentTarget.id);
     var sort_by = this.data.sort_by;
     var sort_icon = ['up-down', 'up-down', 'up-down'];
     if (e.currentTarget.id == "sort1") {
+      if (sort_by == 'comprehensive') {
+        return;
+      }
       sort_by = 'comprehensive';
     } else if (e.currentTarget.id == "sort2") {
       if (sort_by == 'closingPriceDrop') {
@@ -98,7 +132,8 @@ Page({
     }
     this.setData({
       sort_by,
-      sort_icon
+      sort_icon,
+      page: 1,
     });
     this.dataLoad(this.data.select_id, sort_by, 1)
   },
@@ -108,36 +143,83 @@ Page({
     this.setData({
       select_id: e.currentTarget.id,
       sort_by: 'comprehensive',
-      sort_icon: ['up-down', 'up-down', 'up-down']
+      sort_icon: ['up-down', 'up-down', 'up-down'],
+      page: 1
     })
     this.dataLoad(e.currentTarget.id, 'comprehensive', 1)
   },
 
   // 显示搜索框
-  seachIs: function() {
-    var is_hide = 'none';
-    if (this.data.is_hide == 'none') {
-      is_hide = 'flex';
-    }
+  showSeach: function() {
     this.setData({
-      is_hide: is_hide,
+      is_seach: true
+    })
+  },
+
+  //显示侧边栏
+  showSidebar: function() {
+    this.setData({
+      is_sidebar: true
+    })
+  },
+
+  //显示更多
+  showMore: function() {
+    var that = this;
+    if (this.data.logged) {
+      that.closeAll();
+      wx.navigateTo({
+        url: '/pages/user/user',
+      })
+    } else {
+      //登录提示
+      wx.showModal({
+        title: '',
+        content: '您尚未登录，请登录后再操作',
+        success(res) {
+          if (res.confirm) {
+            console.log('用户点击确定');
+          } else if (res.cancel) {
+            that.closeAll();
+            console.log('用户点击取消');
+          }
+        }
+      })
+    }
+  },
+
+  //关闭所有
+  closeAll: function() {
+    this.setData({
+      is_sidebar: false,
+      is_seach: false
     })
   },
 
   seach: function(e) {
-    this.seachIs();
+    this.closeAll();
+    var seach_value = "";
+    if (typeof(e.detail.value) == 'string') {
+      seach_value = e.detail.value;
+    } else {
+      seach_value = e.detail.value.seach_value;
+    }
     wx.navigateTo({
-      url: '/pages/seach/seach?seach_value=' + e.detail.value.seach_value,
+      url: '/pages/seach/seach?seach_value=' + seach_value,
     })
   },
 
   //数据获取
-  dataLoad: function(type, order, start) {
-    db.getData.selectAll(order, start).then(res => {
+  dataLoad: function(type, order, page) {
+    // 显示加载图标
+    wx.showLoading({
+      title: '玩命加载中',
+    })
+    db.getData.selectAll(order, page).then(res => {
         //请求成功
         console.log(res, typeof(res.data))
         var value = this.data.value;
-        value[type] = res.data.map(function(e) {
+        var newValue = res.data.map(function(e) {
           return {
             code: e.code,
             name: e.name,
@@ -147,14 +229,32 @@ Page({
             change: e.change
           }
         });
-        console.log(value)
+
+        if (page == 1) {
+          value[type] = newValue;
+        } else {
+          value[type] = value[type].concat(newValue);
+        }
+
+        // 隐藏加载框
+        wx.hideLoading();
+
         this.setData({
-          value
-        })
+          value,
+          page
+        });
       })
       .catch(err => {
         //请求失败
       });
+    setTimeout(function() {
+      wx.hideLoading()
+    }, 5000)
+  },
+
+  //触底添加数据
+  bottomReLoad: function() {
+    this.dataLoad(this.data.select_id, this.data.sort_by, this.data.page + 1);
   },
 
   /**
@@ -162,6 +262,56 @@ Page({
    */
   onLoad: function(options) {
     this.dataLoad('hushen', 'comprehensive', 1)
+    this.setData({
+      winHeight: wx.getSystemInfoSync().windowHeight - 194
+    })
+
+    // 获取用户信息
+    wx.getSetting({
+      success: res => {
+        if (res.authSetting['scope.userInfo']) {
+          // 已经授权，可以直接调用 getUserInfo 获取头像昵称，不会弹框
+          wx.getUserInfo({
+            success: res => {
+              this.setData({
+                avatarUrl: res.userInfo.avatarUrl
+              })
+            }
+          })
+        }
+      }
+    })
+  },
+
+  onGetUserInfo: function(e) {
+    if (!this.data.logged && e.detail.userInfo) {
+      this.setData({
+        logged: true,
+        avatarUrl: e.detail.userInfo.avatarUrl,
+        nickName: e.detail.userInfo.nickName
+      });
+      this.onGetOpenid();
+    }
+  },
+
+  onGetOpenid: function() {
+    // 调用云函数
+    wx.cloud.callFunction({
+      name: 'login',
+      data: {},
+      success: res => {
+        console.log('[云函数] [login] user openid: ', res.result.openid);
+        app.globalData.openid = res.result.openid;
+        wx.showToast({
+          title: '登录成功',
+          icon: 'success',
+          duration: 2000 //持续的时间
+        });
+      },
+      fail: err => {
+        console.error('[云函数] [login] 调用失败', err)
+      }
+    })
   },
 
   /**
@@ -174,9 +324,7 @@ Page({
   /**
    * 生命周期函数--监听页面显示
    */
-  onShow: function() {
-
-  },
+  onShow: function() {},
 
   /**
    * 生命周期函数--监听页面隐藏
@@ -196,15 +344,52 @@ Page({
    * 页面相关事件处理函数--监听用户下拉动作
    */
   onPullDownRefresh: function() {
+    // 显示顶部刷新图标
+    wx.showNavigationBarLoading();
 
+    var type = this.data.select_id;
+    var order = this.data.sort_by;
+    var page = 1;
+    db.getData.selectAll(order, page).then(res => {
+        //请求成功
+        console.log(res, typeof(res.data))
+        var value = this.data.value;
+        value[type] = res.data.map(function(e) {
+          return {
+            code: e.code,
+            name: e.name,
+            current: e.closingPrice,
+            previousClose: e.previousClose,
+            quoteChange: e.quoteChange,
+            change: e.change
+          }
+        });
+
+        // 隐藏导航栏加载框
+        wx.hideNavigationBarLoading();
+        // 停止下拉动作
+        wx.stopPullDownRefresh();
+
+        this.setData({
+          value,
+          page
+        });
+      })
+      .catch(err => {
+        //请求失败
+      });
+    setTimeout(function() {
+      // 隐藏导航栏加载框
+      wx.hideNavigationBarLoading();
+      // 停止下拉动作
+      wx.stopPullDownRefresh();
+    }, 5000)
   },
 
   /**
    * 页面上拉触底事件的处理函数
    */
-  onReachBottom: function() {
-
-  },
+  onReachBottom: function() {},
 
   /**
    * 用户点击右上角分享
